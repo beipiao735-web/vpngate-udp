@@ -39,6 +39,12 @@ jobs:
           MAX_PER_COUNTRY: '15'
         run: python fetch_udp.py
 
+      # SSTP 版：真实 MS-SSTP 握手探测，产出 public/sstp/nodes.txt（edgetunnel 订阅格式）
+      - name: Fetch and SSTP-probe nodes
+        env:
+          COUNTRIES: 'KR,JP'
+        run: python fetch_sstp.py
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
