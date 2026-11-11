@@ -161,6 +161,18 @@ def make_ovpn(n: dict, proto: str, verified: bool) -> str:
     cfg = cfg.replace("#auth-user-pass", "auth-user-pass")
     if "auth-user-pass" not in cfg:
         cfg = cfg.rstrip() + "\nauth-user-pass\n"
+    # 保活: 官方配置没有任何 ping/keepalive 指令，家宽 NAT 的 UDP 映射几十秒就过期，
+    # 表现为"连上一两分钟被掐"。补上客户端保活（每 5 秒一个保活包，60 秒无响应才重连）。
+    if not re.search(r"^(ping|keepalive)\s", cfg, re.M):
+        keepalive_block = (
+            "\n# gate-udp keepalive: ping every 5s so home NAT UDP mappings stay alive\n"
+            "keepalive 5 60\n"
+            "explicit-exit-notify 1\n"
+        )
+        if "\n<ca>" in cfg:
+            cfg = cfg.replace("\n<ca>", keepalive_block + "\n<ca>", 1)
+        else:
+            cfg = cfg.rstrip() + "\n" + keepalive_block
     tag = "UDP已验证" if (proto == "udp" and verified) else ("UDP待试" if proto == "udp" else "TCP兜底")
     header = (f"# gate-udp | {n['cc']} {n['country']} | {tag} | 出口分类:{n['cls']} "
               f"| ISP:{n['isp'] or '未知'} | API Ping:{n['ping']}ms | 在线:{n['sessions']}人 "
@@ -211,9 +223,11 @@ def main() -> int:
 
     for cc in COUNTRIES:
         lst = by_cc.get(cc, [])
-        # 排序：已验证 UDP 优先，其次住宅优先，再按 ping、在线人数
+        # 排序：已验证 UDP 优先，其次住宅优先，再按 Score 从高到低
+        # （Score 是 VPN Gate 的累计质量分，高分节点多为长期在线的老志愿者，
+        #  比只看 ping 更能挑到"活得久"的节点，用户要的是能持续用），最后看 ping
         lst.sort(key=lambda x: (not x["udp_verified"], x["cls"] != "residential",
-                                x["ping"], x["sessions"]))
+                                -x["score"], x["ping"], x["sessions"]))
         picked = lst[:MAX_PER_COUNTRY]
         for idx, n in enumerate(picked, 1):
             entry = {k: n[k] for k in ("host", "ip", "port", "cc", "country", "ping",
