@@ -30,7 +30,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       # 纯标准库脚本，不需要 pip install，也不需要任何 Secret
       - name: Fetch, classify and probe nodes
