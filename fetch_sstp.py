@@ -189,6 +189,8 @@ def parse_sstp_stream(buf):
 
     流的形态: HTTP 响应头（以 CRLFCRLF 结尾）后紧跟 SSTP 帧；
     个别实现可能不带响应头直接给帧，这里两种都认。
+    SSTP 帧头 4 字节: Version(0x10) + Reserved/C + LengthPacket(R 4 位 + Length 12 位)，
+    之后才是 Message Type(2 字节)。
     """
     if not buf:
         return None, None
@@ -196,22 +198,23 @@ def parse_sstp_stream(buf):
     hdr_end = buf.find(b"\r\n\r\n")
     if hdr_end >= 0:
         offset = hdr_end + 4
-    elif buf[:1] == b"\x01":
+    elif buf[:1] in (b"\x10", b"\x01"):
         offset = 0
     else:
         return None, None  # 响应头还没收全
     frame = buf[offset:]
     if len(frame) < 6:
         return None, None
-    ver, _res, mtype, _ln = struct.unpack(">BBHH", frame[:6])
-    if ver != 1:
-        return "http", "bad sstp version " + str(ver)
+    ver = frame[0]
+    if ver not in (0x10, 0x01):
+        return "http", "bad sstp version " + hex(ver)
+    mtype = struct.unpack(">H", frame[4:6])[0]
     if mtype == 2:
         return "ack", "Call Connect Ack"
     if mtype == 3:
         return "nak", "Call Connect Nak"
     if mtype in (5, 6):
-        return "nak", "Call Disconnect/Abort type " + str(mtype)
+        return "nak", "Call Abort/Disconnect type " + str(mtype)
     return "http", "unexpected sstp type " + str(mtype)
 
 
@@ -242,8 +245,18 @@ def sstp_probe(node):
             "Content-Length: 18446744073709551615\r\n"
             "SSTPCORRELATIONID: " + CORRELATION + "\r\n\r\n"
         )
-        # Call Connect Request: header(6) + NumAttributes(2) + EncapsulatedProtocolId attr(6)
-        pkt = struct.pack(">BBHH", 1, 0, 1, 14) + struct.pack(">H", 1) + struct.pack(">BBHH", 0, 1, 8, 1)
+        # Call Connect Request（[MS-SSTP] 2.2.2，全长 14 字节）:
+        # Version=0x10, C=1, LengthPacket=14, MsgType=1, NumAttr=1,
+        # 属性: Reserved=0, ID=1(Encapsulated Protocol ID), Length1=6, ProtocolID=1(PPP)
+        pkt = (
+            bytes([0x10, 0x01])
+            + struct.pack(">H", 14)
+            + struct.pack(">H", 1)
+            + struct.pack(">H", 1)
+            + bytes([0, 1])
+            + struct.pack(">H", 6)
+            + struct.pack(">H", 1)
+        )
         # 关键: 请求头与 Call Connect Request 必须背靠背一起发。
         # SoftEther 在收到第一个 SSTP 控制包之前不回 HTTP 响应头，
         # 先等响应头再发请求会互相等死（第一版就死在这里）。
