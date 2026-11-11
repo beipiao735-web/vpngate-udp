@@ -20,7 +20,7 @@
   PUBLIC_DIR       产物根目录，默认 ./public（产物写到其 sstp/ 子目录）
   PROBE_TIMEOUT    单节点 SSTP 探测超时秒数，默认 7
   PROBE_WORKERS    并发数，默认 16
-  SSTP_MAX_LINES   nodes.txt 最多行数，默认 60（验过的全发，给用户留足备胎）
+  SSTP_MAX_LINES   nodes.txt 最多行数，默认 100（验过的全发，给用户留足备胎）
   CLASSIFY         1=启用 ip-api 分类（默认），0=跳过
 
 可选文件 edge_hosts.txt（与脚本同目录）：每行一个「入口:端口」，# 开头为注释。
@@ -46,14 +46,19 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 API = os.environ.get("VPNGATE_API", "http://www.vpngate.net/api/iphone/")
-COUNTRIES = [c.strip().upper() for c in os.environ.get("COUNTRIES", "KR,JP").split(",") if c.strip()]
+COUNTRIES = [c.strip().upper() for c in os.environ.get(
+    "COUNTRIES", "KR,JP,TW,HK,SG,VN,TH,MY,PH,ID,AU,US").split(",") if c.strip()]
 PUBLIC_DIR = os.environ.get("PUBLIC_DIR", "./public")
 PROBE_TIMEOUT = float(os.environ.get("PROBE_TIMEOUT", "7"))
 PROBE_WORKERS = int(os.environ.get("PROBE_WORKERS", "16"))
-SSTP_MAX_LINES = int(os.environ.get("SSTP_MAX_LINES", "60"))
+SSTP_MAX_LINES = int(os.environ.get("SSTP_MAX_LINES", "100"))
 CLASSIFY = os.environ.get("CLASSIFY", "1") == "1"
 
-COUNTRY_ZH = {"KR": "韩国", "JP": "日本"}
+COUNTRY_ZH = {
+    "KR": "韩国", "JP": "日本", "TW": "台湾", "HK": "香港", "SG": "新加坡",
+    "VN": "越南", "TH": "泰国", "MY": "马来西亚", "PH": "菲律宾", "ID": "印尼",
+    "AU": "澳大利亚", "US": "美国",
+}
 
 # edgetunnel 入口优选域名池（与 hezhanleiok/gate 模板的内置池一致，公开的 CF 优选域名）
 DEFAULT_EDGE_HOSTS = [
@@ -398,8 +403,12 @@ def main():
     cand = parse_candidates(rows)
     log("KR/JP TCP 志愿者候选: " + str(len(cand)))
     classify(cand)
-    pool = [n for n in cand if n["cls"] != "datacenter"]
-    log("分类后保留（住宅+未知）: " + str(len(pool)))
+    # 用户硬性要求：只发住宅（家宽）节点。分类为机房或未知的都不进订阅，
+    # 宁可少发也不混入非家宽出口；本轮若因此 0 验证，下方 fallback 会保留上一份名单。
+    pool = [n for n in cand if n["cls"] == "residential"]
+    log("分类后保留（仅住宅）: " + str(len(pool))
+        + "（机房 " + str(sum(1 for n in cand if n["cls"] == "datacenter"))
+        + "、未知 " + str(sum(1 for n in cand if n["cls"] == "unknown")) + " 已剔除）")
 
     probed = probe_all(pool)
     verified = [n for n in probed if n.get("probe") == "ack"]

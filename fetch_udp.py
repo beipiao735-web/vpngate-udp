@@ -193,9 +193,10 @@ def main() -> int:
 
     classify(cand)
     # 只保留住宅 + 未验证（机房和官方单独少量输出，见后）
-    pool = [n for n in cand if n["cls"] in ("residential", "unknown")]
-    log(f"住宅/未验证候选: {len(pool)}（机房 {sum(1 for n in cand if n['cls']=='datacenter')}，"
-        f"官方 {sum(1 for n in cand if n['cls']=='official')} 已剔除出主列表）")
+    pool = [n for n in cand if n["cls"] == "residential"]
+    log(f"住宅候选: {len(pool)}（机房 {sum(1 for n in cand if n['cls']=='datacenter')}，"
+        f"官方 {sum(1 for n in cand if n['cls']=='official')}，"
+        f"未知 {sum(1 for n in cand if n['cls']=='unknown')} 已剔除出主列表）")
 
     # UDP 探测：先按 API ping 预排序，每国先探前 MAX*3 个，避免跑满全量
     by_cc: dict[str, list[dict]] = {}
