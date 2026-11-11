@@ -22,6 +22,10 @@
   PROBE_WORKERS    并发数，默认 16
   SSTP_MAX_LINES   nodes.txt 最多行数，默认 60（验过的全发，给用户留足备胎）
   CLASSIFY         1=启用 ip-api 分类（默认），0=跳过
+
+可选文件 edge_hosts.txt（与脚本同目录）：每行一个「入口:端口」，# 开头为注释。
+存在且非空时覆盖内置优选入口池 —— 用来填用户在自己网络上优选出的 Cloudflare 入口，
+入口是链路第一跳，换成用户本地最快的 CF 入口能直接压低整体延迟。
 """
 
 from __future__ import annotations
@@ -52,7 +56,7 @@ CLASSIFY = os.environ.get("CLASSIFY", "1") == "1"
 COUNTRY_ZH = {"KR": "韩国", "JP": "日本"}
 
 # edgetunnel 入口优选域名池（与 hezhanleiok/gate 模板的内置池一致，公开的 CF 优选域名）
-EDGE_HOSTS = [
+DEFAULT_EDGE_HOSTS = [
     "saas.sin.fan:443",
     "www.mfyx.cn:443",
     "cf.nyanya.moe:443",
@@ -64,6 +68,27 @@ EDGE_HOSTS = [
     "cfsaas.080112.xyz:443",
     "cdn.aneko.ink:443",
 ]
+
+
+def _load_edge_hosts():
+    """edge_hosts.txt 存在且非空时用它覆盖内置入口池（用户本地优选出的 CF 入口）。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edge_hosts.txt")
+    try:
+        hosts = []
+        with open(path, encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if ln and not ln.startswith("#"):
+                    hosts.append(ln)
+        if hosts:
+            print("使用 edge_hosts.txt 自定义入口池: " + str(len(hosts)) + " 个", flush=True)
+            return hosts
+    except Exception:
+        pass
+    return DEFAULT_EDGE_HOSTS
+
+
+EDGE_HOSTS = _load_edge_hosts()
 
 SSTP_GUID = "{BA195980-CD49-458b-9E23-C84EE0ADCD75}"
 CORRELATION = "{11111111-2222-3333-4444-555555555555}"
