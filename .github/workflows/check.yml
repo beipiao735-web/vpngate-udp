@@ -1,11 +1,12 @@
 name: gate-udp node check
 
-# 手动触发 + 每 6 小时自动跑一次（UTC 时间，避开整点高峰）
+# 手动触发 + 每 2 小时自动跑一次（UTC 时间，避开整点高峰）
+# 志愿者节点寿命短，刷新越勤，用户打开面板时名单越新鲜、越能挑到还活着的节点。
 # 注意：GitHub 定时任务通常会延迟几分钟；仓库连续 60 天无活动会被自动停用。
 on:
   workflow_dispatch:
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: '23 */2 * * *'
 
 permissions:
   contents: read
