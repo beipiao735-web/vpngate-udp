@@ -167,7 +167,8 @@ def parse_candidates(rows):
             "port": int(rm.group(2)),
             "cc": cc,
             "country": (r.get("countrylong") or "").strip(),
-            "ping": _int(r.get("ping")),
+            # VPN Gate 用 999999 之类的哨兵值表示"测不到"，归一化成 -1，别让界面显示出假毫秒数
+            "ping": (lambda p: p if 0 < p < 999999 else -1)(_int(r.get("ping"))),
             "sessions": _int(r.get("numvpnsessions"), 0),
             "speed": _int(r.get("speed"), 0),
             "score": _int(r.get("score"), 0),
@@ -358,7 +359,8 @@ def build_nodes_text(verified):
     # 把它们排在订阅最前面，用户默认连到的就是最稳的那批；ping 只作次级参考。
     ordered = sorted(
         verified,
-        key=lambda n: (n["cls"] != "residential", -n["score"], n["ping"], n["sessions"]),
+        key=lambda n: (n["cls"] != "residential", -n["score"],
+                       n["ping"] if n["ping"] > 0 else 999999, n["sessions"]),
     )[:SSTP_MAX_LINES]
     for i, n in enumerate(ordered):
         kind = "住宅" if n["cls"] == "residential" else "未知"
@@ -446,7 +448,8 @@ def main():
                 "cls": n["cls"], "probe": n.get("probe"), "probe_detail": n.get("probe_detail"),
                 "link": "sstp://vpn:vpn@" + n["fqdn"] + ":" + str(n["port"]),
             }
-            for n in sorted(probed, key=lambda x: (x.get("probe") != "ack", -x["score"], x["ping"]))
+            for n in sorted(probed, key=lambda x: (x.get("probe") != "ack", -x["score"],
+                                                   x["ping"] if x["ping"] > 0 else 999999))
         ],
         "duration_s": round(time.time() - started, 1),
     }
