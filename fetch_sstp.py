@@ -20,7 +20,7 @@
   PUBLIC_DIR       产物根目录，默认 ./public（产物写到其 sstp/ 子目录）
   PROBE_TIMEOUT    单节点 SSTP 探测超时秒数，默认 7
   PROBE_WORKERS    并发数，默认 16
-  SSTP_MAX_LINES   nodes.txt 最多行数，默认 30
+  SSTP_MAX_LINES   nodes.txt 最多行数，默认 60（验过的全发，给用户留足备胎）
   CLASSIFY         1=启用 ip-api 分类（默认），0=跳过
 """
 
@@ -46,7 +46,7 @@ COUNTRIES = [c.strip().upper() for c in os.environ.get("COUNTRIES", "KR,JP").spl
 PUBLIC_DIR = os.environ.get("PUBLIC_DIR", "./public")
 PROBE_TIMEOUT = float(os.environ.get("PROBE_TIMEOUT", "7"))
 PROBE_WORKERS = int(os.environ.get("PROBE_WORKERS", "16"))
-SSTP_MAX_LINES = int(os.environ.get("SSTP_MAX_LINES", "30"))
+SSTP_MAX_LINES = int(os.environ.get("SSTP_MAX_LINES", "60"))
 CLASSIFY = os.environ.get("CLASSIFY", "1") == "1"
 
 COUNTRY_ZH = {"KR": "韩国", "JP": "日本"}
@@ -324,9 +324,11 @@ def fallback_nodes_text():
 def build_nodes_text(verified):
     lines = []
     counters = {}
+    # 稳定性优先：Score 是 VPN Gate 的累计质量分，高分志愿者长期在线、最不容易中途掉线，
+    # 把它们排在订阅最前面，用户默认连到的就是最稳的那批；ping 只作次级参考。
     ordered = sorted(
         verified,
-        key=lambda n: (n["cls"] != "residential", n["ping"], n["sessions"]),
+        key=lambda n: (n["cls"] != "residential", -n["score"], n["ping"], n["sessions"]),
     )[:SSTP_MAX_LINES]
     for i, n in enumerate(ordered):
         kind = "住宅" if n["cls"] == "residential" else "未知"
@@ -406,11 +408,11 @@ def main():
         "nodes": [
             {
                 "host": n["host"], "ip": n["ip"], "port": n["port"], "cc": n["cc"],
-                "ping": n["ping"], "sessions": n["sessions"], "isp": n["isp"],
+                "ping": n["ping"], "sessions": n["sessions"], "score": n["score"], "isp": n["isp"],
                 "cls": n["cls"], "probe": n.get("probe"), "probe_detail": n.get("probe_detail"),
                 "link": "sstp://vpn:vpn@" + n["fqdn"] + ":" + str(n["port"]),
             }
-            for n in sorted(probed, key=lambda x: (x.get("probe") != "ack", x["ping"]))
+            for n in sorted(probed, key=lambda x: (x.get("probe") != "ack", -x["score"], x["ping"]))
         ],
         "duration_s": round(time.time() - started, 1),
     }
