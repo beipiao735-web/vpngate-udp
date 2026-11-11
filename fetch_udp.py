@@ -267,13 +267,23 @@ def main() -> int:
     with open(os.path.join(PUBLIC_DIR, "nodes.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    rows_html = "\n".join(
-        f"<tr><td>{n['cc']}</td><td>{'UDP ✓' if n['udp_verified'] else 'TCP'}</td>"
-        f"<td>{n['cls']}</td><td>{n['isp'] or '-'}</td><td>{n['ping']}</td>"
-        f"<td>{n['sessions']}</td><td>{n['ip']}:{n['port']}</td>"
-        f"<td>{(' <a href=\"' + n['file_udp'] + '\">UDP配置</a>') if n.get('file_udp') else ''}"
-        f" <a href=\"{n['file_tcp']}\">TCP配置</a></td></tr>"
-        for n in out_nodes)
+    # 注意：链接先算成变量再拼行。Python 3.11 及以下禁止在 f-string 的
+    # 大括号表达式里出现反斜杠（转义引号），那样脚本在解析阶段就直接
+    # SyntaxError，整轮跑不起来（GitHub Actions 默认 3.11 踩过一次）。
+    def _row(n):
+        udp_link = ""
+        if n.get("file_udp"):
+            udp_link = " <a href='" + n["file_udp"] + "'>UDP配置</a>"
+        elif n.get("file_udp_try"):
+            udp_link = " <a href='" + n["file_udp_try"] + "'>UDP待试</a>"
+        tcp_link = " <a href='" + n["file_tcp"] + "'>TCP配置</a>"
+        proto = "UDP ✓" if n["udp_verified"] else "TCP"
+        return ("<tr><td>" + n["cc"] + "</td><td>" + proto + "</td><td>" + n["cls"]
+                + "</td><td>" + (n["isp"] or "-") + "</td><td>" + str(n["ping"])
+                + "</td><td>" + str(n["sessions"]) + "</td><td>" + n["ip"] + ":" + str(n["port"])
+                + "</td><td>" + udp_link + tcp_link + "</td></tr>")
+
+    rows_html = "\n".join(_row(n) for n in out_nodes)
     html = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>gate-udp 节点面板</title><style>body{{font-family:sans-serif;margin:2em}}
 table{{border-collapse:collapse}}td,th{{border:1px solid #ccc;padding:4px 8px}}</style></head>
