@@ -24,8 +24,16 @@
   CLASSIFY         1=启用 ip-api 分类（默认），0=跳过
 
 可选文件 edge_hosts.txt（与脚本同目录）：每行一个「入口:端口」，# 开头为注释。
-存在且非空时覆盖内置优选入口池 —— 用来填用户在自己网络上优选出的 Cloudflare 入口，
-入口是链路第一跳，换成用户本地最快的 CF 入口能直接压低整体延迟。
+
+入口池（2026-11-11 用户改定：入口主要用 bestcf，出口仍住宅）：
+  主池 = 每轮动态抓 bestcf.pages.dev 的联通优选名单（见 BESTCF_SOURCES），
+         只取 443 端口、去重保序；
+  后备 = edge_hosts.txt 里用户家宽实测的 8 个入口（主池抓不到/不足 3 个时整池回退到后备）；
+  再兜底 = 内置 DEFAULT_EDGE_HOSTS。
+bestcf 名单格式（已对一手页面/接口实测，2026-11-11）：
+  每行「host:port#备注」，如 104.26.11.140:443#CF 联通优选 | ...；
+  cfyes/ipv4.txt 是三网混排，备注含「联通」的行才是联通版，移动/电信行必须滤掉；
+  抓取必须带浏览器 User-Agent，否则 Cloudflare 返回 403。
 """
 
 from __future__ import annotations
@@ -75,8 +83,52 @@ DEFAULT_EDGE_HOSTS = [
 ]
 
 
-def _load_edge_hosts():
-    """edge_hosts.txt 存在且非空时用它覆盖内置入口池（用户本地优选出的 CF 入口）。"""
+# bestcf 联通优选来源：(URL, 备注必须包含的关键词；None = 整表已按联通过滤)
+BESTCF_SOURCES = [
+    ("https://090227.pages.dev/bestcf?isp=cu&ips=50", None),
+    ("https://bestcf.pages.dev/cfyes/ipv4.txt", "联通"),
+]
+BESTCF_TIMEOUT = float(os.environ.get("BESTCF_TIMEOUT", "15"))
+_HOSTPORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]*:(\d{1,5})$")
+
+
+def _parse_hostport(left):
+    """校验一行名单左段是合法 host:port 且端口为 443，否则返回 None。"""
+    left = left.strip()
+    m = _HOSTPORT_RE.match(left)
+    if not m or m.group(1) != "443":
+        return None
+    return left
+
+
+def _fetch_bestcf_hosts():
+    """抓 bestcf 联通优选名单，返回去重保序的入口列表（抓不到返回空表）。"""
+    hosts = []
+    seen = set()
+    for url, needle in BESTCF_SOURCES:
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            text = urllib.request.urlopen(req, timeout=BESTCF_TIMEOUT).read().decode("utf-8", "ignore")
+        except Exception as e:
+            print("bestcf 抓取失败 " + url + ": " + str(e), flush=True)
+            continue
+        for ln in text.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            left, _, remark = ln.partition("#")
+            if needle and needle not in remark:
+                continue
+            hp = _parse_hostport(left)
+            if hp and hp not in seen:
+                seen.add(hp)
+                hosts.append(hp)
+    return hosts
+
+
+def _load_fallback_hosts():
+    """后备入口池：edge_hosts.txt（用户实测）优先，否则内置池。"""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edge_hosts.txt")
     try:
         hosts = []
@@ -86,11 +138,24 @@ def _load_edge_hosts():
                 if ln and not ln.startswith("#"):
                     hosts.append(ln)
         if hosts:
-            print("使用 edge_hosts.txt 自定义入口池: " + str(len(hosts)) + " 个", flush=True)
             return hosts
     except Exception:
         pass
-    return DEFAULT_EDGE_HOSTS
+    return list(DEFAULT_EDGE_HOSTS)
+
+
+def _load_edge_hosts():
+    """入口池：bestcf 联通优选为主池，用户实测入口作后备追加在后。"""
+    fallback = _load_fallback_hosts()
+    best = _fetch_bestcf_hosts()
+    if len(best) >= 3:
+        merged = best + [h for h in fallback if h not in set(best)]
+        print("入口池: bestcf 联通优选 " + str(len(best)) + " 个为主 + 后备 "
+              + str(len(merged) - len(best)) + " 个, 共 " + str(len(merged)) + " 个", flush=True)
+        return merged
+    print("bestcf 入口不足 3 个(" + str(len(best)) + "), 整池回退到后备入口 "
+          + str(len(fallback)) + " 个", flush=True)
+    return fallback
 
 
 EDGE_HOSTS = _load_edge_hosts()
