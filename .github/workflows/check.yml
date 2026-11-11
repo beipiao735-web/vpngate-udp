@@ -36,14 +36,14 @@ jobs:
       # 纯标准库脚本，不需要 pip install，也不需要任何 Secret
       - name: Fetch, classify and probe nodes
         env:
-          COUNTRIES: 'KR,JP'
-          MAX_PER_COUNTRY: '15'
+          COUNTRIES: 'KR,JP,TW,HK,SG,VN,TH,MY,PH,ID,AU,US'
+          MAX_PER_COUNTRY: '10'
         run: python fetch_udp.py
 
       # SSTP 版：真实 MS-SSTP 握手探测，产出 public/sstp/nodes.txt（edgetunnel 订阅格式）
       - name: Fetch and SSTP-probe nodes
         env:
-          COUNTRIES: 'KR,JP'
+          COUNTRIES: 'KR,JP,TW,HK,SG,VN,TH,MY,PH,ID,AU,US'
         run: python fetch_sstp.py
 
       - name: Setup Pages
