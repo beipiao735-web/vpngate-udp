@@ -65,6 +65,14 @@ def fetch_api() -> str:
     raise SystemExit(f"抓取 VPN Gate API 失败: {last}")
 
 
+def _int(v, default=0):
+    """VPN Gate API 偶尔把数字字段写成 '-'（如 Ping 为 '-'），直接 int() 会让整轮崩掉。"""
+    try:
+        return int(str(v).strip())
+    except (ValueError, TypeError, AttributeError):
+        return default
+
+
 def parse_nodes(raw: str) -> list[dict]:
     lines = [l for l in raw.splitlines() if l and not l.startswith("*")]
     if not lines:
@@ -83,12 +91,12 @@ def parse_nodes(raw: str) -> list[dict]:
         nodes.append({
             "host": row["HostName"],
             "ip": row["IP"],
-            "score": int(row["Score"] or 0),
-            "ping": int(row["Ping"] or 9999),
-            "speed": int(row["Speed"] or 0),
+            "score": _int(row["Score"], 0),
+            "ping": _int(row["Ping"], 9999),
+            "speed": _int(row["Speed"], 0),
             "country": row["CountryLong"],
             "cc": row["CountryShort"].upper(),
-            "sessions": int(row["NumVpnSessions"] or 0),
+            "sessions": _int(row["NumVpnSessions"], 0),
             "operator": row.get("Operator", ""),
             "api_proto": (pm.group(1).lower() if pm else "tcp"),
             "port": int(rm.group(2)),
