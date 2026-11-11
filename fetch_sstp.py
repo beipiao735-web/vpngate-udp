@@ -184,6 +184,37 @@ def classify(nodes):
 # ---------------------------------------------------------------------------
 # MS-SSTP 握手探测
 # ---------------------------------------------------------------------------
+def parse_sstp_stream(buf):
+    """从已收到的字节流里解析 SSTP 控制帧。返回 (stage, detail) 或 (None, None)。
+
+    流的形态: HTTP 响应头（以 CRLFCRLF 结尾）后紧跟 SSTP 帧；
+    个别实现可能不带响应头直接给帧，这里两种都认。
+    """
+    if not buf:
+        return None, None
+    offset = 0
+    hdr_end = buf.find(b"\r\n\r\n")
+    if hdr_end >= 0:
+        offset = hdr_end + 4
+    elif buf[:1] == b"\x01":
+        offset = 0
+    else:
+        return None, None  # 响应头还没收全
+    frame = buf[offset:]
+    if len(frame) < 6:
+        return None, None
+    ver, _res, mtype, _ln = struct.unpack(">BBHH", frame[:6])
+    if ver != 1:
+        return "http", "bad sstp version " + str(ver)
+    if mtype == 2:
+        return "ack", "Call Connect Ack"
+    if mtype == 3:
+        return "nak", "Call Connect Nak"
+    if mtype in (5, 6):
+        return "nak", "Call Disconnect/Abort type " + str(mtype)
+    return "http", "unexpected sstp type " + str(mtype)
+
+
 def sstp_probe(node):
     """返回 (stage, detail):
     stage = 'ack'     收到 Call Connect Ack -> SSTP 已验证
@@ -211,28 +242,32 @@ def sstp_probe(node):
             "Content-Length: 18446744073709551615\r\n"
             "SSTPCORRELATIONID: " + CORRELATION + "\r\n\r\n"
         )
-        s.sendall(http_req.encode())
-        resp = b""
-        while b"\r\n\r\n" not in resp and len(resp) < 8192:
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            resp += chunk
-        first = resp.split(b"\r\n", 1)[0].decode("latin1", "replace") if resp else ""
-        if " 200" not in first:
-            return "http", first[:60] or "empty response"
         # Call Connect Request: header(6) + NumAttributes(2) + EncapsulatedProtocolId attr(6)
         pkt = struct.pack(">BBHH", 1, 0, 1, 14) + struct.pack(">H", 1) + struct.pack(">BBHH", 0, 1, 8, 1)
-        s.sendall(pkt)
-        data = s.recv(1024)
-        if len(data) >= 4:
-            _ver, _res, mtype, _ln = struct.unpack(">BBHH", data[:4])
-            if mtype == 2:
-                return "ack", "Call Connect Ack"
-            if mtype == 3:
-                return "nak", "Call Connect Nak"
-            return "http", "unexpected sstp type " + str(mtype)
-        return "http", "no sstp reply"
+        # 关键: 请求头与 Call Connect Request 必须背靠背一起发。
+        # SoftEther 在收到第一个 SSTP 控制包之前不回 HTTP 响应头，
+        # 先等响应头再发请求会互相等死（第一版就死在这里）。
+        s.sendall(http_req.encode() + pkt)
+        buf = b""
+        deadline = time.time() + PROBE_TIMEOUT
+        while time.time() < deadline and len(buf) < 65536:
+            stage, detail = parse_sstp_stream(buf)
+            if stage is not None:
+                return stage, detail
+            try:
+                chunk = s.recv(4096)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            buf += chunk
+        stage, detail = parse_sstp_stream(buf)
+        if stage is not None:
+            return stage, detail
+        if buf:
+            first = buf.split(b"\r\n", 1)[0].decode("latin1", "replace")
+            return "http", "no sstp frame; first bytes: " + first[:50]
+        return "http", "no reply at all"
     except Exception as exc:
         return "http", type(exc).__name__ + ": " + str(exc)[:60]
     finally:
